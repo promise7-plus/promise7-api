@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: promise7-api
+    env: php
+    region: singapore
+    plan: free
+    buildCommand: composer install
+    startCommand: php -S 0.0.0.0:$PORT index.php
