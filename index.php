@@ -73,30 +73,37 @@ function checkAdminAuth($admin_api_key)
     }
 }
 
-// Tường lửa chống DDoS Rate Limit
+$token_in_request = getBearerToken();
+$is_admin_request = ($token_in_request === 'Bearer ' . $admin_api_key || $token_in_request === $admin_api_key);
+
+// 2. Tường lửa chống DDoS Rate Limit (Bỏ qua hoàn toàn nếu là Admin Request)
 $ip = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 $time = time();
-$stmt = $pdo->prepare("SELECT * FROM ip_logs WHERE ip_address = ?");
-$stmt->execute([$ip]);
-$log = $stmt->fetch();
 
-if ($log) {
-    if ($log['is_blocked']) {
-        die(json_encode(['status' => 'false', 'message' => 'IP Banned (DDoS/Brute-force Detected).']));
-    }
-    if ($time - $log['last_request'] < 5) {
-        $count = $log['request_count'] + 1;
-        $is_blocked = ($count > 20) ? 1 : 0; // Quá 20 request / 5s -> Ban IP
-        $pdo->prepare("UPDATE ip_logs SET request_count = ?, last_request = ?, is_blocked = ? WHERE ip_address = ?")
-            ->execute([$count, $time, $is_blocked, $ip]);
-        if ($is_blocked) {
-            die(json_encode(['status' => 'false', 'message' => 'IP Banned do truy cập quá nhanh.']));
+if (!$is_admin_request) {
+    // Chỉ áp dụng kiểm tra Rate Limit và Banned IP đối với người dùng thông thường / Client
+    $stmt = $pdo->prepare("SELECT * FROM ip_logs WHERE ip_address = ?");
+    $stmt->execute([$ip]);
+    $log = $stmt->fetch();
+
+    if ($log) {
+        if ($log['is_blocked']) {
+            die(json_encode(['status' => 'false', 'message' => 'IP Banned (DDoS/Brute-force Detected).']));
+        }
+        if (($time - $log['last_request']) < 5) {
+            $count = $log['request_count'] + 1;
+            $is_blocked = ($count > 50) ? 1 : 0; // Quá 20 request / 5s -> Ban IP
+            $pdo->prepare("UPDATE ip_logs SET request_count = ?, last_request = ?, is_blocked = ? WHERE ip_address = ?")
+                ->execute([$count, $time, $is_blocked, $ip]);
+            if ($is_blocked) {
+                die(json_encode(['status' => 'false', 'message' => 'IP Banned do truy cập quá nhanh.']));
+            }
+        } else {
+            $pdo->prepare("UPDATE ip_logs SET request_count = 1, last_request = ? WHERE ip_address = ?")->execute([$time, $ip]);
         }
     } else {
-        $pdo->prepare("UPDATE ip_logs SET request_count = 1, last_request = ? WHERE ip_address = ?")->execute([$time, $ip]);
+        $pdo->prepare("INSERT INTO ip_logs (ip_address, last_request) VALUES (?, ?)")->execute([$ip, $time]);
     }
-} else {
-    $pdo->prepare("INSERT INTO ip_logs (ip_address, last_request) VALUES (?, ?)")->execute([$ip, $time]);
 }
 
 $action = $_GET['action'] ?? '';
